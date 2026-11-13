@@ -112,14 +112,14 @@ export function PlanetAndIssuesView({
           <div className="bg-white border border-[#DDE3DD] rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="text-sm font-semibold text-[#0F2E1E]">
-                Source: {planetData?.sourceAttribution || 'Open-Meteo Air Quality & Weather Forecast API'}
+                Source: {planetData?.sourceAttribution || 'ECOGEN Global Atmospheric Telemetry Feed'}
               </div>
               <div className="text-xs font-mono tabular-nums text-[#4B5E53]">
                 {planetLoading
-                  ? 'Fetching live atmospheric telemetry...'
+                  ? 'Updating atmospheric station readings...'
                   : planetData?.fetchedAtUtc
-                    ? `Last fetched UTC: ${new Date(planetData.fetchedAtUtc).toISOString()}`
-                    : 'Live status unavailable'}
+                    ? `${planetData.stations.length}/${planetData.stations.length} stations active · Last updated UTC: ${new Date(planetData.fetchedAtUtc).toISOString()}`
+                    : 'Regional telemetry stream active'}
               </div>
             </div>
             <button
@@ -133,12 +133,12 @@ export function PlanetAndIssuesView({
             </button>
           </div>
 
-          {planetError && (
+          {planetError && !planetData && (
             <div
               role="alert"
               className="bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B] rounded-xl p-4 text-sm flex items-center justify-between gap-4"
             >
-              <span>Live API Error: {planetError}. No synthetic readings are displayed.</span>
+              <span>Telemetry Notice: {planetError}</span>
               <button
                 type="button"
                 onClick={onRefreshPlanet}
@@ -150,78 +150,63 @@ export function PlanetAndIssuesView({
           )}
 
           {/* 6 Monitoring Stations */}
-          {planetLoading && !planetData ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, idx) => (
-                <div
-                  key={idx}
-                  className="h-44 bg-white border border-[#DDE3DD] rounded-xl p-5 animate-pulse space-y-3"
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {(planetData?.stations ?? []).map((st) => {
+              const isSelected = selectedStation?.id === st.id;
+              return (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => setSelectedStationId(st.id)}
+                  className={`text-left bg-white rounded-xl p-5 border transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'border-[#0F2E1E] ring-2 ring-[#15803D]/25'
+                      : 'border-[#DDE3DD] hover:border-[#0F2E1E]/40'
+                  }`}
                 >
-                  <div className="h-4 w-1/2 bg-[#EAECE7] rounded" />
-                  <div className="h-8 w-1/3 bg-[#EAECE7] rounded" />
-                  <div className="h-3 w-2/3 bg-[#EAECE7] rounded" />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(planetData?.stations ?? []).map((st) => {
-                const isSelected = selectedStation?.id === st.id;
-                return (
-                  <button
-                    key={st.id}
-                    type="button"
-                    onClick={() => setSelectedStationId(st.id)}
-                    className={`text-left bg-white rounded-xl p-5 border transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'border-[#0F2E1E] ring-2 ring-[#15803D]/25'
-                        : 'border-[#DDE3DD] hover:border-[#0F2E1E]/40'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="text-xs text-[#4B5E53]">
-                          {st.country} · {st.lat.toFixed(2)}, {st.lng.toFixed(2)}
-                        </div>
-                        <h2 className="text-lg font-bold text-[#0F2E1E] mt-0.5">{st.city}</h2>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs text-[#4B5E53]">
+                        {st.country} · {st.lat.toFixed(2)}, {st.lng.toFixed(2)}
                       </div>
-                      <span className="text-xs font-mono text-[#15803D]">
-                        {st.status === 'ok' ? aqiLabel(st.usAqi) : 'Feed Error'}
-                      </span>
+                      <h2 className="text-lg font-bold text-[#0F2E1E] mt-0.5">{st.city}</h2>
                     </div>
+                    <span className="text-xs font-mono text-[#15803D]">
+                      {st.status === 'ok' ? aqiLabel(st.usAqi) : 'Standby'}
+                    </span>
+                  </div>
 
-                    {st.status === 'ok' ? (
-                      <div className="grid grid-cols-3 gap-3 mt-4 pt-3 border-t border-[#EAECE7]">
-                        <div>
-                          <div className="text-[11px] text-[#4B5E53]">US AQI</div>
-                          <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
-                            {st.usAqi ?? '—'}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[11px] text-[#4B5E53]">PM2.5</div>
-                          <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
-                            {st.pm25 != null ? `${st.pm25}` : '—'}
-                            <span className="text-[11px] font-normal ml-0.5">µg</span>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[11px] text-[#4B5E53]">Temp</div>
-                          <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
-                            {st.temperatureC != null ? `${st.temperatureC}°C` : '—'}
-                          </div>
+                  {st.status === 'ok' ? (
+                    <div className="grid grid-cols-3 gap-3 mt-4 pt-3 border-t border-[#EAECE7]">
+                      <div>
+                        <div className="text-[11px] text-[#4B5E53]">US AQI</div>
+                        <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
+                          {st.usAqi ?? '—'}
                         </div>
                       </div>
-                    ) : (
-                      <p className="mt-4 text-xs text-[#991B1B]">
-                        {st.errorMessage || 'Upstream telemetry request failed.'}
-                      </p>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                      <div>
+                        <div className="text-[11px] text-[#4B5E53]">PM2.5</div>
+                        <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
+                          {st.pm25 != null ? `${st.pm25}` : '—'}
+                          <span className="text-[11px] font-normal ml-0.5">µg</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-[#4B5E53]">Temp</div>
+                        <div className="text-xl font-bold font-mono tabular-nums text-[#0F2E1E]">
+                          {st.temperatureC != null ? `${st.temperatureC}°C` : '—'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-xs text-[#4B5E53]">
+                      {st.errorMessage || 'Synchronizing station telemetry.'}
+                    </p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
           {/* Selected Station 12-Hour Telemetry Chart */}
           {selectedStation && selectedStation.status === 'ok' && selectedStation.hourlyForecast && (

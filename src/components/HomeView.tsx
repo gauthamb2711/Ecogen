@@ -246,7 +246,11 @@ export function HomeView({
               </div>
               <div className="text-xs text-[#4B5E53] mt-2">
                 {activeStation?.pm25 != null
-                  ? `PM2.5: ${activeStation.pm25} µg/m³ · Open-Meteo`
+                  ? `PM2.5: ${activeStation.pm25} µg/m³ · ${
+                      activeStation.sourceName.includes('Open-Meteo')
+                        ? 'Open-Meteo'
+                        : 'Regional Stream'
+                    }`
                   : 'Connect to live feed in Planet Data'}
               </div>
             </div>

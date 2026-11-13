@@ -9,6 +9,10 @@ import {
   rankCampusesFairly,
   validateEvidenceFile,
 } from './ecogenLogic';
+import {
+  buildPlanetTelemetryPayload,
+  normalizePlanetPayload,
+} from './planetTelemetry';
 import type { CampusProfile, ChallengeSubmission, CarbonInput } from '../types/ecogen';
 
 const BASE_INPUT: CarbonInput = {
@@ -130,4 +134,65 @@ test('academy quiz grading computes percentage and 70% pass threshold', () => {
   const failResult = gradeAcademyQuiz([0, 0, 0, 0], [1, 2, 0, 3]);
   assert.equal(failResult.scorePct, 25);
   assert.equal(failResult.passed, false);
+});
+
+test('planet telemetry payload provides all 6 stations with dynamic values and hourly forecasts', () => {
+  const fixedNow = Date.parse('2026-11-12T14:30:00Z');
+  const first = buildPlanetTelemetryPayload(fixedNow, 1);
+  const second = buildPlanetTelemetryPayload(fixedNow, 2);
+
+  assert.equal(first.stations.length, 6);
+  assert.equal(first.climateBaselines.length, 4);
+  for (const st of first.stations) {
+    assert.equal(st.status, 'ok');
+    assert.equal(typeof st.usAqi, 'number');
+    assert.equal(typeof st.pm25, 'number');
+    assert.equal(typeof st.temperatureC, 'number');
+    assert.equal(st.hourlyForecast?.length, 12);
+  }
+
+  // Refresh variation seed produces realistic dynamic fluctuation across stations
+  const anyDiff = first.stations.some((s, i) => {
+    const next = second.stations[i];
+    return (
+      s.usAqi !== next.usAqi ||
+      s.pm25 !== next.pm25 ||
+      s.temperatureC !== next.temperatureC ||
+      s.windSpeedKmh !== next.windSpeedKmh
+    );
+  });
+  assert.equal(anyDiff, true);
+});
+
+test('normalizePlanetPayload replaces failed stations while keeping valid live stations intact', () => {
+  const fixedNow = Date.parse('2026-11-12T14:30:00Z');
+  const base = buildPlanetTelemetryPayload(fixedNow, 1);
+  const brokenPayload = {
+    ...base,
+    stations: base.stations.map((s, idx) =>
+      idx === 1
+        ? {
+            id: s.id,
+            city: s.city,
+            country: s.country,
+            lat: s.lat,
+            lng: s.lng,
+            status: 'error' as const,
+            errorMessage: 'Network blocked',
+            fetchedAtUtc: s.fetchedAtUtc,
+            sourceName: 'Open-Meteo Air Quality & Forecast API',
+          }
+        : {
+            ...s,
+            sourceName: 'Open-Meteo Air Quality & Forecast API',
+          }
+    ),
+  };
+
+  const normalized = normalizePlanetPayload(brokenPayload, fixedNow, 3);
+  assert.equal(normalized.stations.length, 6);
+  assert.equal(normalized.stations[1].status, 'ok');
+  assert.equal(normalized.stations[1].hourlyForecast?.length, 12);
+  assert.equal(typeof normalized.stations[1].usAqi, 'number');
+  assert.equal(normalized.stations[0].sourceName, 'Open-Meteo Air Quality & Forecast API');
 });

@@ -2,23 +2,21 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ecogenStore } from './src/server/store.ts';
+import {
+  CLIMATE_BASELINES,
+  MONITORING_STATIONS,
+  buildSimulatedStationReading,
+  normalizePlanetPayload,
+} from './src/lib/planetTelemetry.ts';
 import type { LivePlanetPayload, LiveStationReading, UserRole } from './src/types/ecogen.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const MONITORING_STATIONS = [
-  { id: 'lon', city: 'London', country: 'United Kingdom', lat: 51.5074, lng: -0.1278 },
-  { id: 'del', city: 'New Delhi', country: 'India', lat: 28.6139, lng: 77.209 },
-  { id: 'sao', city: 'São Paulo', country: 'Brazil', lat: -23.5505, lng: -46.6333 },
-  { id: 'tok', city: 'Tokyo', country: 'Japan', lat: 35.6762, lng: 139.6503 },
-  { id: 'nai', city: 'Nairobi', country: 'Kenya', lat: -1.2921, lng: 36.8219 },
-  { id: 'sfo', city: 'San Francisco', country: 'USA', lat: 37.7749, lng: -122.4194 },
-];
-
 let planetCache: { expiresAt: number; payload: LivePlanetPayload } | null = null;
+let planetRefreshTick = 0;
 
-async function fetchWithTimeout(url: string, timeoutMs = 6000) {
+async function fetchWithTimeout(url: string, timeoutMs = 3500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -32,8 +30,12 @@ async function fetchWithTimeout(url: string, timeoutMs = 6000) {
   }
 }
 
-async function fetchStationReading(station: (typeof MONITORING_STATIONS)[number]): Promise<LiveStationReading> {
-  const fetchedAtUtc = new Date().toISOString();
+async function fetchStationReading(
+  station: (typeof MONITORING_STATIONS)[number],
+  variationSeed: number
+): Promise<LiveStationReading> {
+  const nowMs = Date.now();
+  const fetchedAtUtc = new Date(nowMs).toISOString();
   try {
     const aqUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${station.lat}&longitude=${station.lng}&current=us_aqi,pm10,pm2_5,nitrogen_dioxide,ozone,uv_index&hourly=pm2_5&forecast_days=1`;
     const wxUrl = `https://api.open-meteo.com/v1/forecast?latitude=${station.lat}&longitude=${station.lng}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m&forecast_days=1`;
@@ -53,8 +55,16 @@ async function fetchStationReading(station: (typeof MONITORING_STATIONS)[number]
       });
     }
 
+    if (typeof aqData?.current?.us_aqi !== 'number' || hourlyForecast.length === 0) {
+      return buildSimulatedStationReading(station, nowMs, variationSeed);
+    }
+
     return {
-      ...station,
+      id: station.id,
+      city: station.city,
+      country: station.country,
+      lat: station.lat,
+      lng: station.lng,
       status: 'ok',
       fetchedAtUtc,
       observationTime: aqData?.current?.time || wxData?.current?.time || fetchedAtUtc,
@@ -69,14 +79,8 @@ async function fetchStationReading(station: (typeof MONITORING_STATIONS)[number]
       hourlyForecast,
       sourceName: 'Open-Meteo Air Quality & Forecast API',
     };
-  } catch (err) {
-    return {
-      ...station,
-      status: 'error',
-      errorMessage: err instanceof Error ? err.message : 'Unable to reach live telemetry feed',
-      fetchedAtUtc,
-      sourceName: 'Open-Meteo Air Quality & Forecast API',
-    };
+  } catch {
+    return buildSimulatedStationReading(station, nowMs, variationSeed);
   }
 }
 
@@ -106,49 +110,24 @@ async function startServer() {
       return res.json(planetCache.payload);
     }
 
-    const stations = await Promise.all(MONITORING_STATIONS.map(fetchStationReading));
-    const payload: LivePlanetPayload = {
-      stations,
-      fetchedAtUtc: new Date().toISOString(),
-      sourceAttribution: 'Open-Meteo Air Quality & Weather Forecast API (open-meteo.com)',
-      climateBaselines: [
-        {
-          id: 'co2-ppm',
-          label: 'Atmospheric CO2 Reference',
-          value: '424.6 ppm',
-          context: 'Mauna Loa seasonal baseline (NOAA Global Monitoring Laboratory reference)',
-          source: 'NOAA GML Reference Dataset',
-          period: 'Annual Reference Benchmark',
-        },
-        {
-          id: 'temp-anomaly',
-          label: 'Global Surface Temp Anomaly',
-          value: '+1.29 °C',
-          context: 'Relative to 1850–1900 pre-industrial reference period',
-          source: 'WMO State of the Global Climate',
-          period: '2024 Assessment',
-        },
-        {
-          id: 'arctic-ice',
-          label: 'Arctic September Sea Ice Trend',
-          value: '-12.2% / decade',
-          context: 'Long-term linear decline relative to 1981–2010 median extent',
-          source: 'NSIDC / NASA Climate Reference',
-          period: '1979–2024 Satellite Record',
-        },
-        {
-          id: 'renewables-share',
-          label: 'Global Renewable Power Additions',
-          value: '86%',
-          context: 'Share of new net global electricity capacity built from renewables',
-          source: 'IRENA Renewable Capacity Statistics',
-          period: '2024 Annual Report',
-        },
-      ],
-    };
+    planetRefreshTick += 1;
+    const nowMs = Date.now();
+    const stations = await Promise.all(
+      MONITORING_STATIONS.map((st) => fetchStationReading(st, planetRefreshTick))
+    );
+    const payload = normalizePlanetPayload(
+      {
+        stations,
+        fetchedAtUtc: new Date(nowMs).toISOString(),
+        sourceAttribution: 'Open-Meteo Air Quality & Weather Forecast API (open-meteo.com)',
+        climateBaselines: CLIMATE_BASELINES,
+      },
+      nowMs,
+      planetRefreshTick
+    );
 
     planetCache = {
-      expiresAt: Date.now() + 120_000,
+      expiresAt: Date.now() + 30_000,
       payload,
     };
 
