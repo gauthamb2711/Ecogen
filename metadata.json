@@ -1,0 +1,6 @@
+{
+  "name": "ECOGEN",
+  "description": "Small Actions. Measurable Impact. A Greener Future. Environmental Awareness and Community Impact Platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
